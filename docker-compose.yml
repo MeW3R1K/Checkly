@@ -1,0 +1,100 @@
+﻿services:
+  database:
+    image: timescale/timescaledb:latest-pg16
+    container_name: checkly_database
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-checkly}
+      POSTGRES_USER: ${POSTGRES_USER:-checkly}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-checkly_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - checkly_pg_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-checkly} -d ${POSTGRES_DB:-checkly}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - checkly_network
+
+  backend:
+    build:
+      context: ./backend
+    container_name: checkly_backend
+    environment:
+      NODE_ENV: development
+      PORT: ${BACKEND_PORT:-4000}
+      DATABASE_URL: ${DATABASE_URL:-postgres://checkly:checkly_password@database:5432/checkly}
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_real_environment}
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - checkly_network
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: checkly_frontend
+    environment:
+      VITE_API_URL: http://localhost:4000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - checkly_network
+
+  notifications_service:
+    build:
+      context: ./notifications_service
+    container_name: checkly_notifications
+    environment:
+      PORT: ${NOTIFICATIONS_PORT:-5001}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./notifications_service:/app
+    depends_on:
+      - backend
+    networks:
+      - checkly_network
+
+  reports_service:
+    build:
+      context: ./reports_service
+    container_name: checkly_reports
+    environment:
+      PORT: ${REPORTS_PORT:-5002}
+      DATABASE_URL: ${DATABASE_URL:-postgres://checkly:checkly_password@database:5432/checkly}
+    ports:
+      - "5002:5002"
+    volumes:
+      - ./reports_service:/app
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - checkly_network
+
+volumes:
+  checkly_pg_data:
+
+networks:
+  checkly_network:
+    driver: bridge
